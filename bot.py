@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import json, os, re
 from datetime import datetime, timezone, timedelta
 
@@ -14,6 +15,7 @@ DAILY_FILE = "daily_logs.json"
 # ================== BOT ==================
 intents = discord.Intents.default()
 intents.message_content = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ================== UTILS ==================
@@ -27,16 +29,17 @@ def save(file, data):
     with open(file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-def is_admin(member):
+def is_admin(member: discord.Member):
     return member.guild_permissions.administrator
 
 # ================== READY ==================
 @bot.event
 async def on_ready():
-    print(f"✅ Bot online: {bot.user}")
+    await bot.tree.sync()
+    print(f"✅ Bot online & slash synced: {bot.user}")
 
 # ================== PARSE BẢNG RANK ==================
-def parse_ranking_message(content):
+def parse_ranking_message(content: str):
     lines = [l.strip() for l in content.splitlines() if l.strip()]
 
     crews, levels, points = [], [], []
@@ -72,7 +75,7 @@ def parse_ranking_message(content):
 
 # ================== AUTO NHẬN BẢNG ==================
 @bot.event
-async def on_message(msg):
+async def on_message(msg: discord.Message):
     if msg.author.bot:
         return
 
@@ -118,16 +121,17 @@ async def on_message(msg):
 
     await bot.process_commands(msg)
 
-# ================== COMMANDS ==================
+# ================== SLASH COMMANDS ==================
 
-@bot.command()
-async def top(ctx):
-    if not is_admin(ctx.author):
-        return await ctx.message.delete()
-
+# /top
+@bot.tree.command(name="top", description="Xem TOP 10 crew tổng điểm cao nhất")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_top(interaction: discord.Interaction):
     ranking = load(RANK_FILE, {})
     if not ranking:
-        return await ctx.send("❌ Chưa có dữ liệu.")
+        return await interaction.response.send_message(
+            "❌ Chưa có dữ liệu.", ephemeral=True
+        )
 
     top10 = sorted(
         ranking.items(),
@@ -139,20 +143,23 @@ async def top(ctx):
     for i, (tag, data) in enumerate(top10, start=1):
         desc += f"**{i}. [{tag}] {data['name']}** — **{data['total']:,}** điểm\n"
 
-    await ctx.send(embed=discord.Embed(
+    embed = discord.Embed(
         title="🏆 TOP 10 CREW – TỔNG ĐIỂM",
         description=desc,
         color=0xf1c40f
-    ))
+    )
 
-@bot.command()
-async def fullbxh(ctx):
-    if not is_admin(ctx.author):
-        return await ctx.message.delete()
+    await interaction.response.send_message(embed=embed)
 
+# /fullbxh
+@bot.tree.command(name="fullbxh", description="Xem FULL bảng xếp hạng crew")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_fullbxh(interaction: discord.Interaction):
     ranking = load(RANK_FILE, {})
     if not ranking:
-        return await ctx.send("❌ Chưa có dữ liệu.")
+        return await interaction.response.send_message(
+            "❌ Chưa có dữ liệu.", ephemeral=True
+        )
 
     sorted_all = sorted(
         ranking.items(),
@@ -161,11 +168,13 @@ async def fullbxh(ctx):
     )
 
     desc = ""
+    embeds = []
+
     for i, (tag, data) in enumerate(sorted_all, start=1):
         desc += f"**{i}. [{tag}] {data['name']}** — {data['total']:,} điểm\n"
 
         if i % 20 == 0:
-            await ctx.send(embed=discord.Embed(
+            embeds.append(discord.Embed(
                 title="📊 BẢNG XẾP HẠNG CREW",
                 description=desc,
                 color=0x3498db
@@ -173,23 +182,33 @@ async def fullbxh(ctx):
             desc = ""
 
     if desc:
-        await ctx.send(embed=discord.Embed(
+        embeds.append(discord.Embed(
             title="📊 BẢNG XẾP HẠNG CREW",
             description=desc,
             color=0x3498db
         ))
 
-@bot.command()
-async def resetbxh(ctx):
-    if not is_admin(ctx.author):
-        return await ctx.message.delete()
+    await interaction.response.send_message(embeds=embeds)
+
+# /resetbxh (confirm YES)
+@bot.tree.command(name="resetbxh", description="RESET toàn bộ điểm crew (confirm YES)")
+@app_commands.describe(confirm="Nhập YES để xác nhận reset")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_resetbxh(interaction: discord.Interaction, confirm: str):
+    if confirm != "YES":
+        return await interaction.response.send_message(
+            "❌ Bạn phải nhập **YES** để xác nhận reset.",
+            ephemeral=True
+        )
 
     save(RANK_FILE, {})
 
-    await ctx.send(embed=discord.Embed(
+    embed = discord.Embed(
         title="♻️ RESET BẢNG XẾP HẠNG",
-        description="Toàn bộ điểm crew đã được reset về **0**.",
+        description="Toàn bộ điểm crew đã được **reset về 0**.",
         color=0xe74c3c
-    ))
+    )
+    await interaction.response.send_message(embed=embed)
 
+# ================== RUN ==================
 bot.run(TOKEN)
